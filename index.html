@@ -26,7 +26,7 @@
     <div id="app" class="max-w-6xl mx-auto">
         <header class="text-center mb-8">
             <h1 class="text-4xl font-extrabold text-indigo-400 mb-2">Frayer Model Vocabulary Tool</h1>
-            <p class="text-gray-400">Build and review vocabulary entries using the 4-quadrant method. (No API Key Required!) <span class="font-bold text-yellow-300">Shareable!</span></p>
+            <p class="text-gray-400">Build and review vocabulary entries using the 4-quadrant method. Data is shared publicly across all users.</p>
         </header>
 
         <main class="grid lg:grid-cols-4 gap-6">
@@ -137,29 +137,24 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // IMPORT deleteDoc and updateDoc for editing/deletion functionality
         import { getFirestore, doc, addDoc, onSnapshot, collection, query, serverTimestamp, orderBy, deleteDoc, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- GLOBAL SETUP ---
-        // setLogLevel('debug'); // Disable detailed Firebase logging for production version
+        // --- GLOBAL VARIABLES (Provided by Canvas Environment, or set to fallback values) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let db;
         let auth;
         let userId = null;
         let isAuthReady = false;
+        let isFirebaseConnected = Object.keys(firebaseConfig).length > 0;
         
-        // Removed API Key and fetchDefinition function
-        
-        // --- STANDALONE CONFIGURATION ---
-        const APP_ID_KEY = 'frayer_model_app_id';
-        let appId = localStorage.getItem(APP_ID_KEY);
-        if (!appId) {
-            appId = 'standalone-' + crypto.randomUUID();
-            localStorage.setItem(APP_ID_KEY, appId);
-        }
-        
-        const firebaseConfig = {}; 
-        
+        // --- CORE FUNCTION DEFINITIONS (Assigned later based on connection type) ---
+        let subscribeToVocabulary = () => console.log('Subscription not initialized.');
+        let saveFrayerEntry = async () => console.log('Save function not initialized.');
+        let deleteFrayerEntry = async () => console.log('Delete function not initialized.');
+
         // DOM Elements
         const wordListEl = document.getElementById('word-list');
         const authInfoEl = document.getElementById('auth-info');
@@ -167,7 +162,6 @@
         const formEl = document.getElementById('frayer-form');
         const loadingMessageEl = document.getElementById('loading-message');
         
-        // UPDATED: No more AI output elements. New reference definition input.
         const referenceDefinitionInputEl = document.getElementById('reference-definition-input');
         const studentDefinitionInputEl = document.getElementById('student-definition-input');
         
@@ -184,21 +178,18 @@
         const editButtonEl = document.getElementById('edit-button');
         const deleteButtonEl = document.getElementById('delete-button');
         
-        // New Reference Definition Display Elements
         const refDefContentContainerEl = document.getElementById('ref-def-content-container');
         const refDefTextEl = document.getElementById('ref-def-text');
         
-        // New Quiz Mode elements and state
         const quizModeToggleEl = document.getElementById('quiz-mode-toggle');
         const revealButtonsContainerEl = document.getElementById('reveal-buttons');
         let isQuizMode = false;
-        let revealedState = {}; // Tracks which quadrants are revealed in quiz mode
+        let revealedState = {}; 
 
-        let currentSelectedEntry = null; // Store the currently viewed entry data
+        let currentSelectedEntry = null; 
 
-        // Helper map for displayFrayerCard
         const quadrantMap = {
-            definition: 'def-content', // This is the Student Definition
+            definition: 'def-content', 
             characteristics: 'char-content',
             examples: 'ex-content',
             nonExamples: 'non-ex-content'
@@ -211,54 +202,40 @@
         }
 
         function displayFrayerCard(data) {
-            currentSelectedEntry = data; // Set the current entry
+            currentSelectedEntry = data; 
             
-            // Display data
             document.getElementById('current-word-title').textContent = data.word || 'Word Not Found';
 
-            const isPlaceholder = !data.id; // Check if it's a real entry or a placeholder
+            const isPlaceholder = !data.id; 
 
-            // Quiz Mode visibility logic
             if (isQuizMode && !isPlaceholder) {
-                // Initialize revealed state if this is a new word in quiz mode
                 if (!revealedState.hasOwnProperty('definition')) {
-                    revealedState = {
-                        definition: false,
-                        characteristics: false,
-                        examples: false,
-                        nonExamples: false
-                    };
+                    revealedState = { definition: false, characteristics: false, examples: false, nonExamples: false };
                 }
-                revealButtonsContainerEl.classList.remove('hidden', 'flex-wrap'); // Ensure it's visible and wraps
+                revealButtonsContainerEl.classList.remove('hidden', 'flex-wrap'); 
                 revealButtonsContainerEl.classList.add('flex', 'flex-wrap');
             } else {
-                // Not in quiz mode OR displaying a placeholder, hide reveal buttons
                 revealButtonsContainerEl.classList.add('hidden');
-                // Ensure revealedState is reset when exiting quiz mode/changing word
                 revealedState = {}; 
             }
             
-            // Render all quadrants based on state
             ['definition', 'characteristics', 'examples', 'nonExamples'].forEach(key => {
                 const contentEl = document.getElementById(quadrantMap[key]);
                 const content = data[key] || `No ${key.replace(/([A-Z])/g, ' $1').toLowerCase()} provided.`;
                 const btn = revealButtonsContainerEl.querySelector(`[data-quadrant="${key}"]`);
                 
                 if (isQuizMode && !isPlaceholder && !revealedState[key]) {
-                    // Quiz mode, not revealed: hide content
                     contentEl.textContent = '??? Click "Reveal" above to check your answer ???';
                     contentEl.classList.add('italic', 'text-gray-500');
                     if (btn) btn.classList.remove('hidden');
                     
                 } else {
-                    // Not quiz mode OR revealed: show content
                     contentEl.textContent = content;
                     contentEl.classList.remove('italic', 'text-gray-500');
                     if (btn) btn.classList.add('hidden');
                 }
             });
 
-            // 1. Update Reference Definition Display
             if (data.referenceDefinition) {
                 refDefTextEl.textContent = data.referenceDefinition;
                 refDefContentContainerEl.classList.remove('hidden');
@@ -267,18 +244,46 @@
                 refDefContentContainerEl.classList.add('hidden');
             }
 
-            // Display creator info
             creatorInfoEl.innerHTML = data.creatorId
-                ? `Created by: <span class="font-mono text-xs text-yellow-300">${data.creatorId.substring(0, 8)}...</span>`
+                ? `Created by: <span class="font-mono text-xs text-yellow-300">User ${data.creatorId.substring(0, 8)}...</span>`
                 : 'Creator: N/A';
 
-            // Show edit/delete buttons only if the current user created the entry, it's not a placeholder, and quiz mode is OFF
             if (isAuthReady && userId === data.creatorId && !isPlaceholder && !isQuizMode) {
                 editDeleteButtonsEl.classList.remove('hidden');
             } else {
                 editDeleteButtonsEl.classList.add('hidden');
             }
         }
+        
+        function updateWordList(vocabulary) {
+            loadingMessageEl.classList.add('hidden');
+            wordListEl.innerHTML = '';
+            
+            // Sort in memory by timestamp if available (needed for local storage mock)
+            vocabulary.sort((a, b) => (b.timestamp?.seconds || b.timestamp || 0) - (a.timestamp?.seconds || a.timestamp || 0));
+
+            vocabulary.forEach((entry) => {
+                const listItem = document.createElement('div');
+                listItem.className = 'p-3 bg-gray-700 hover:bg-indigo-600 rounded-lg cursor-pointer transition duration-150 shadow-md';
+                
+                const creatorPrefix = entry.creatorId ? `<span class="font-mono text-xs text-yellow-400"> (User ${entry.creatorId.substring(0, 4)}...)</span>` : '';
+                listItem.innerHTML = `<strong>${entry.word}</strong>${creatorPrefix}`;
+                
+                listItem.onclick = () => {
+                    revealedState = {}; 
+                    displayFrayerCard(entry);
+                }
+                wordListEl.appendChild(listItem);
+            });
+            
+            if (vocabulary.length === 0) {
+                wordListEl.innerHTML = '<p class="text-gray-500 p-2">No words saved yet. Add one above!</p>';
+                displayFrayerCard({ word: 'No words saved yet.' }); 
+            } else if (vocabulary.length > 0 && !currentSelectedEntry) {
+                displayFrayerCard(vocabulary[0]);
+            }
+        }
+
 
         function resetForm() {
             formEl.reset();
@@ -287,8 +292,6 @@
             saveButtonEl.textContent = 'Save Frayer Entry';
             wordInputEl.disabled = false;
             cancelEditButtonEl.classList.add('hidden');
-            
-            // Reset the reference input field
             referenceDefinitionInputEl.value = '';
         }
 
@@ -297,158 +300,203 @@
             saveButtonEl.textContent = 'Update Entry';
             entryIdInputEl.value = entry.id;
             wordInputEl.value = entry.word;
-            wordInputEl.disabled = true; // Prevent editing the word itself during an update
+            wordInputEl.disabled = true; 
             
-            // Populate all fields, including the new reference field
             studentDefinitionInputEl.value = entry.definition;
-            referenceDefinitionInputEl.value = entry.referenceDefinition || ''; // Handle potential undefined field
+            referenceDefinitionInputEl.value = entry.referenceDefinition || ''; 
             characteristicsInputEl.value = entry.characteristics;
             examplesInputEl.value = entry.examples;
             nonExamplesInputEl.value = entry.nonExamples;
             
             cancelEditButtonEl.classList.remove('hidden');
-            
-            // Hide edit/delete buttons when form is open for editing
             editDeleteButtonsEl.classList.add('hidden');
         }
 
-        // --- FIREBASE INITIALIZATION AND AUTH (Uses LocalStorage Mock) ---
-        if (Object.keys(firebaseConfig).length > 0) {
-            // Standard Firebase initialization (omitted for brevity, assume the previous block handles this)
+        // -----------------------------------------------------------
+        // --- FIREBASE / LOCAL DATABASE IMPLEMENTATION SELECTOR ---
+        // -----------------------------------------------------------
+        
+        if (isFirebaseConnected) {
+            
+            console.log("Firebase config found. Initializing persistent database connection.");
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            // Log level set for Canvas requirement
+            setLogLevel('debug'); 
+
+            // 1. Authentication
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    authInfoEl.textContent = `User ID: ${userId.substring(0, 10)}... (Persistent)`;
+                    isAuthReady = true;
+                    subscribeToVocabulary();
+                } else {
+                    try {
+                        // Sign in with token or anonymously
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        displayError(`Authentication failed: ${error.message}. Falling back to local mode.`);
+                        console.error("Firebase Auth Error:", error);
+                        // Fallback logic if auth fails
+                        setupLocalDatabase();
+                    }
+                }
+            });
+
+            // 2. Firestore Path and Functions
+            const COLLECTION_PATH = `artifacts/${appId}/public/data/frayerWords`;
+
+            const getCollectionRef = () => collection(db, COLLECTION_PATH);
+
+            subscribeToVocabulary = () => {
+                if (!isAuthReady) return; 
+
+                const q = query(getCollectionRef(), orderBy('timestamp', 'desc'));
+
+                onSnapshot(q, (snapshot) => {
+                    const vocabulary = [];
+                    snapshot.forEach(doc => {
+                        vocabulary.push({ id: doc.id, ...doc.data() });
+                    });
+                    updateWordList(vocabulary);
+                }, (error) => {
+                    displayError(`Error fetching data: ${error.message}`);
+                    console.error("Firestore Snapshot Error:", error);
+                });
+            };
+
+            saveFrayerEntry = async (data, entryId) => {
+                if (!isAuthReady) return displayError("Authentication not ready. Cannot save.");
+
+                const entryData = {
+                    ...data,
+                    creatorId: userId,
+                    timestamp: serverTimestamp(),
+                };
+
+                try {
+                    if (entryId) {
+                        const docRef = doc(db, COLLECTION_PATH, entryId);
+                        await updateDoc(docRef, entryData);
+                    } else {
+                        await addDoc(getCollectionRef(), entryData);
+                    }
+                } catch (error) {
+                    displayError(`Failed to save entry: ${error.message}`);
+                    console.error("Firestore Save Error:", error);
+                }
+            };
+
+            deleteFrayerEntry = async (entryId) => {
+                if (!isAuthReady) return displayError("Authentication not ready. Cannot delete.");
+
+                if (!window.confirm(`Are you sure you want to delete this word entry?`)) {
+                    return;
+                }
+                
+                try {
+                    await deleteDoc(doc(db, COLLECTION_PATH, entryId));
+                } catch (error) {
+                    displayError(`Failed to delete entry: ${error.message}`);
+                    console.error("Firestore Delete Error:", error);
+                }
+            };
+
         } else {
-            // --- OFFLINE/MOCK DATABASE FALLBACK (New for standalone) ---
-            displayError("Warning: Firebase config not found. Data is not persistent and will only be saved locally in this browser.");
+            // --- OFFLINE/MOCK DATABASE FALLBACK ---
+            setupLocalDatabase();
+        }
+        
+        function setupLocalDatabase() {
+            displayError("Warning: Firebase config not found. Data is NOT persistent or shared. Using Local Storage.");
             loadingMessageEl.textContent = "Offline Mode: Data is NOT shared or permanently saved.";
             isAuthReady = true;
-            userId = 'local-user'; // Mock user ID for local mode
+            userId = 'local-user-' + Math.random().toString(36).substring(2, 6);
             authInfoEl.textContent = `User ID: ${userId} (Local)`;
             
-            // Mock database implementation using localStorage
             const LOCAL_STORAGE_KEY = 'frayer_model_local_data';
             let localData = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
             
-            // Mock Firestore functions
-            function getCollectionRef() { return 'local'; }
-            function subscribeToVocabulary() {
+            subscribeToVocabulary = () => {
                 // Simulate initial load
                 updateWordList(localData);
-            }
-            
-            // Mock onSnapshot handler for local data
-            function updateWordList(data) {
-                loadingMessageEl.classList.add('hidden');
-                wordListEl.innerHTML = '';
-                const vocabulary = data;
-                
-                // Sort locally by a 'timestamp' property if it exists, simulating Firestore orderBy
-                vocabulary.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            };
 
-                vocabulary.forEach((entry) => {
-                    const listItem = document.createElement('div');
-                    listItem.className = 'p-3 bg-gray-700 hover:bg-indigo-600 rounded-lg cursor-pointer transition duration-150 shadow-md';
-                    
-                    const creatorPrefix = entry.creatorId ? `<span class="font-mono text-xs text-yellow-400"> (${entry.creatorId.substring(0, 4)}...)</span>` : '';
-                    listItem.innerHTML = `<strong>${entry.word}</strong>${creatorPrefix}`;
-                    
-                    listItem.onclick = () => {
-                        revealedState = {}; 
-                        displayFrayerCard(entry);
-                    }
-                    wordListEl.appendChild(listItem);
-                });
-                
-                if (vocabulary.length === 0) {
-                    wordListEl.innerHTML = '<p class="text-gray-500 p-2">No words saved yet. Add one above!</p>';
-                    displayFrayerCard({ word: 'No words saved yet.' }); 
-                } else if (vocabulary.length > 0 && !currentSelectedEntry) {
-                    displayFrayerCard(vocabulary[0]);
-                }
-                
-                // Save the data back to localStorage
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(vocabulary));
-                localData = vocabulary;
-            }
-
-            async function saveFrayerEntry(data, entryId) {
+            saveFrayerEntry = async (data, entryId) => {
                 const now = Date.now();
                 const newEntry = {
                     word: data.word,
                     definition: data.definition,
-                    referenceDefinition: data.referenceDefinition, // New field
+                    referenceDefinition: data.referenceDefinition,
                     characteristics: data.characteristics,
                     examples: data.examples,
                     nonExamples: data.nonExamples,
                 };
                 
                 if (entryId) {
-                    // Update existing entry
                     const index = localData.findIndex(e => e.id === entryId);
                     if (index !== -1) {
                         localData[index] = { ...localData[index], ...newEntry, updatedAt: now };
                     }
                 } else {
-                    // Add new entry
                     const id = 'doc_' + now;
                     localData.push({ id, ...newEntry, timestamp: now, creatorId: userId });
                 }
                 updateWordList(localData);
-            }
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localData));
+            };
 
-            async function deleteFrayerEntry(entryId) {
-                if (!confirm(`Are you sure you want to delete this word entry?`)) {
+            deleteFrayerEntry = async (entryId) => {
+                if (!window.confirm(`Are you sure you want to delete this word entry?`)) {
                     return;
                 }
                 localData = localData.filter(e => e.id !== entryId);
                 updateWordList(localData);
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localData));
                 displayFrayerCard({ word: 'Select a word or create a new one!' });
                 editDeleteButtonsEl.classList.add('hidden');
-            }
+            };
             
-            // Start the local subscription
             subscribeToVocabulary();
         }
 
-
-        // --- EVENT LISTENERS ---
+        // --- COMMON EVENT LISTENERS ---
         
-        // Remove the 'blur' event listener that triggered fetchDefinition
-        // wordInputEl.addEventListener('blur', (e) => { fetchDefinition(e.target.value.trim()); });
-
-        // Edit button listener
         editButtonEl.addEventListener('click', () => {
             if (currentSelectedEntry) {
                 loadEntryForEdit(currentSelectedEntry);
             }
         });
 
-        // Delete button listener
         deleteButtonEl.addEventListener('click', () => {
             if (currentSelectedEntry) {
-                // Use a simple custom confirmation instead of alert/confirm
-                if (confirm('Are you sure you want to delete this entry? This action cannot be undone.')) {
-                    deleteFrayerEntry(currentSelectedEntry.id);
-                }
+                deleteFrayerEntry(currentSelectedEntry.id);
             }
         });
         
-        // Cancel button listener
         cancelEditButtonEl.addEventListener('click', (e) => {
              e.preventDefault();
              resetForm();
-             // Re-display the card to ensure creator buttons are correct if a word was selected
              if (currentSelectedEntry) displayFrayerCard(currentSelectedEntry);
         });
 
 
         formEl.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const entryId = entryIdInputEl.value; // Check if we are editing (has ID)
+            const entryId = entryIdInputEl.value; 
             const saveButton = document.getElementById('save-button');
             saveButton.disabled = true;
 
             const word = wordInputEl.value.trim();
             const definition = studentDefinitionInputEl.value.trim();
-            const referenceDefinition = referenceDefinitionInputEl.value.trim(); // New field
+            const referenceDefinition = referenceDefinitionInputEl.value.trim(); 
             const characteristics = characteristicsInputEl.value.trim();
             const examples = examplesInputEl.value.trim();
             const nonExamples = nonExamplesInputEl.value.trim();
@@ -458,7 +506,6 @@
                 
                 await saveFrayerEntry(newEntry, entryId);
 
-                // Clear form inputs
                 resetForm();
             } else {
                 displayError("The word, student definition, characteristics, examples, and non-examples fields must be filled out to save an entry.");
@@ -467,31 +514,24 @@
             saveButton.disabled = false;
         });
         
-        // Quiz Mode Toggle Listener
         quizModeToggleEl.addEventListener('change', () => {
             isQuizMode = quizModeToggleEl.checked;
             
-            // If we are currently viewing an entry, re-display it to apply quiz mode
             if (currentSelectedEntry && currentSelectedEntry.word && currentSelectedEntry.word !== 'Select a word or create a new one!' && currentSelectedEntry.word !== 'No words saved yet.') {
-                // When toggling, reset the revealed state to start the quiz fresh
                 revealedState = {}; 
                 displayFrayerCard(currentSelectedEntry);
             } else {
-                // If quiz mode is off or no word is selected, just hide buttons
                 editDeleteButtonsEl.classList.add('hidden');
                 revealButtonsContainerEl.classList.add('hidden');
             }
             
-            // Always reset the input form when toggling quiz mode
             resetForm();
         });
 
-        // Reveal Button Listener
         revealButtonsContainerEl.addEventListener('click', (e) => {
             const quadrant = e.target.getAttribute('data-quadrant');
             if (quadrant && isQuizMode && currentSelectedEntry) {
                 revealedState[quadrant] = true;
-                // Re-display the card to show the revealed content
                 displayFrayerCard(currentSelectedEntry);
             }
         });
